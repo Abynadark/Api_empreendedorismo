@@ -1,0 +1,71 @@
+from fastapi import APIRouter, Depends, HTTPException
+from models import Paciente
+from datetime import datetime, timedelta, timezone
+from dependencies import pegar_sessao
+from main import bcript_context, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, SECRET_KEY #segurança
+from schemas.paciente_schema import PacienteSchema
+from sqlalchemy.orm import Session
+from schemas.login_schemas import PacienteLoginSchema
+from jose import jwt, JWTError
+
+paciente_router = APIRouter(prefix="/paciente/sistema", tags=["pacientes"])
+
+def criar_token(id_paciente, duracao_token=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)):
+    brasil_tz = timezone(timedelta(hours=-3))
+    data_expiracao = datetime.now(brasil_tz) + duracao_token
+    dic_info = {"sub": id_paciente, "exp": data_expiracao}
+    jwt_codificado = jwt.encode(dic_info, SECRET_KEY, ALGORITHM)
+
+    return jwt_codificado
+
+verificar_token(token)
+#verificar se o token é valido e extrair o id
+
+def autenticar_paciente(email, senha, session):
+    paciente = session.query(Paciente).filter(Paciente.pa_email == email).first()
+    if not paciente:
+        return False
+    elif not bcript_context.verify(senha, paciente.pa_senha):
+        False  
+    return paciente
+    
+
+@paciente_router.post("/criar_conta")
+async def criar_conta(paciente_schema: PacienteSchema, session: Session = Depends(pegar_sessao)):
+    
+    paciente = session.query(Paciente).filter(Paciente.pa_cpf == paciente_schema.pa_cpf).first()
+    if paciente:
+        raise HTTPException(status_code=400, detail="Já Existe Paciente Cadastrado com Esse CPF")
+    
+    else:
+        senha_criptografada = bcript_context.hash(paciente_schema.pa_senha) #segurança
+        novo_paciente = Paciente(paciente_schema.pa_cpf, paciente_schema.pa_nome, paciente_schema.pa_datanasc, paciente_schema.pa_telefone, paciente_schema.pa_email, senha_criptografada, paciente_schema.pa_endereco, paciente_schema.pa_historico)
+        session.add(novo_paciente)
+        session.commit()
+        session.close()
+    
+        return {"mensagem": f"Paciente de {paciente_schema.pa_cpf} Cadastrado com Sucesso"}
+    
+    
+@paciente_router.post("/login")
+async def login(paciente_login_schema: PacienteLoginSchema, session: Session = Depends(pegar_sessao)):
+    paciente = autenticar_paciente(paciente_login_schema.pa_email, paciente_login_schema.pa_senha, session)
+    if not paciente:
+        raise HTTPException(status_code=400, detail="Paciente não encontrado ou credenciais inválidas")
+    else:
+        access_token = criar_token(paciente.pa_id)
+        refresh_token = criar_token(paciente.pa_id, duracao_token=timedelta(days=7))
+        return{
+            "acess_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "Bearer"
+        }
+        
+@paciente_router.get("/refresh")
+async def use_refresh_token(token):
+    paciente = verificar_token(token)
+    access_token = criar_token
+
+@paciente_router.get("/consultas")
+async def listar_consultas():
+    return {"mensagem": "Você acessou a rota de consultas"}
